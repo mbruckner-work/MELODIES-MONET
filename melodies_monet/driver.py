@@ -1545,6 +1545,7 @@ class analysis:
                             # Select only the analysis time window.
                             pairdf_all = pairdf_all.sel(time=slice(self.start_time,self.end_time))
                         else:
+                            use_xrplots = False
                             # convert to dataframe
                             pairdf_all = p.obj.to_dataframe(dim_order=["time", "x"])
                             # Select only the analysis time window.
