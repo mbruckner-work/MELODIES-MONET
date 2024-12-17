@@ -1449,7 +1449,7 @@ class analysis:
                             obs_dat = obs.obj.sel(time=slice(self.start_time.date(),self.end_time.date()))#.copy()
                             model_obj = model_obj.sel(time=slice(self.start_time.date(),self.end_time.date()))#.copy()
                             # interpolate model to observation, calculate column with averaging kernels applied
-                            paired = sutil.mopitt_l3_pairing(model_obj,obs_dat,keys[0])
+                            paired = sutil.mopitt_l3_pairing(model_obj,obs_dat,keys[0],global_m=mod['mod_kwargs']['isglobal'])
                             p = pair()
                             p.type = obs.obs_type
                             p.obs = obs.label
