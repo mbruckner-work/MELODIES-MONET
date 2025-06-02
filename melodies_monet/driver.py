@@ -253,21 +253,14 @@ class observation:
                 print('Reading OMPS L3')
                 self.obj = mio.sat._omps_l3_mm.open_dataset(self.file)
             elif self.sat_type == 'omps_nm':
+                from monetio import sat
                 print('Reading OMPS_NM')
                 if time_interval is not None:
                     flst = tsub.subset_OMPS_l2(self.file,time_interval)
                 else:
                     flst = self.file
 
-                self.obj = mio.sat._omps_nadir_mm.read_OMPS_nm(flst)
-
-                # couple of changes to move to reader
-                self.obj = self.obj.swap_dims({'x':'time'}) # indexing needs
-                self.obj = self.obj.sortby('time') # enforce time in order. 
-                # restrict observation data to time_interval if using
-                # additional development to deal with files crossing intervals needed (eg situations where orbit start at 23hrs, ends next day).
-                if time_interval is not None:
-                    self.obj = self.obj.sel(time=slice(time_interval[0],time_interval[-1]))
+                self.obj = sat._omps_nadir_mm.read_OMPS_nm(flst)
 
             elif self.sat_type == 'mopitt_l3':
                 print('Reading MOPITT')
@@ -603,8 +596,9 @@ class model:
             self.mod_kwargs.update({"fname_met_2D": control_dict['model'][self.label].get('files_met_surf', None)})
             self.obj = mio.models._camx_mm.open_mfdataset(self.files, **self.mod_kwargs)
         elif 'fv3raqms' in self.model.lower():
+            from monetio import models
             print(self.mod_kwargs)
-            self.obj = mio.models.fv3raqms.open_mfdataset(self.files,**self.mod_kwargs)
+            self.obj = models.fv3raqms.open_mfdataset(self.files,**self.mod_kwargs)
         elif 'raqms' in self.model.lower():
             self.mod_kwargs.update({'var_list': list_input_var})
             if time_interval is not None:
