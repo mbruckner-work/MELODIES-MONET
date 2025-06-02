@@ -600,6 +600,7 @@ class model:
             print(self.mod_kwargs)
             self.obj = models.fv3raqms.open_mfdataset(self.files,**self.mod_kwargs)
         elif 'raqms' in self.model.lower():
+            from monetio import models
             self.mod_kwargs.update({'var_list': list_input_var})
             if time_interval is not None:
                 # fill filelist with subset
@@ -608,9 +609,9 @@ class model:
             else:
                 file_list = self.files
             if len(file_list) > 1:
-                self.obj = mio.models.raqms.open_mfdataset(file_list,**self.mod_kwargs)
+                self.obj = models.raqms.open_mfdataset(file_list,**self.mod_kwargs)
             else:
-                self.obj = mio.models.raqms.open_dataset(file_list)
+                self.obj = models.raqms.open_dataset(file_list)
             if 'ptrop' in self.obj and 'pres_pa_trop' not in self.obj:
                 self.obj = self.obj.rename({'ptrop':'pres_pa_trop'})
 
@@ -1371,6 +1372,7 @@ class analysis:
                         p.obs = obs.label
                         p.model = mod.label
                         p.model_vars = keys
+                        p.model_vars[0] += '_column_model'                        
                         p.obs_vars = obs_vars
                         p.obj = paired_data 
                         label = '{}_{}'.format(p.obs,p.model)

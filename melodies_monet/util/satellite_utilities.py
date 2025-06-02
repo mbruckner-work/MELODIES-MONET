@@ -305,4 +305,4 @@ def omps_nm_pairing(model_data,obs_data,o3varname,apply_apriori=True,modgrid_met
             print(f'The regridding method {modgrid_method} is unavailable.')
         paired_on_modgrid['time'] = (['time'],[pd.to_datetime(day)])
         all_days_paired.append(paired_on_modgrid)
-    return xr.merge(all_days_paired)
+    return xr.concat(all_days_paired,dim='time')
