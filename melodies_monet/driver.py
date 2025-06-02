@@ -1363,18 +1363,7 @@ class analysis:
                         
                         from .util import satellite_utilities as sutil
                         
-                        # necessary observation index things 
-                        ## the along track coordinate dim sometimes needs to be time and other times an unassigned 'x'
-                        if 'time' in obs.obj.dims:
-                            obs.obj = obs.obj.sel(time=slice(self.start_time,self.end_time))
-                            obs.obj = obs.obj.swap_dims({'time':'x'})
-                        if pairing_kws['apply_ak'] is True:
-                            model_obj = mod.obj[keys+['pres_pa_mid','surfpres_pa']]
-                            
-                            paired_data = sutil.omps_nm_pairing_apriori(model_obj,obs.obj,keys)
-                        else:
-                            model_obj = mod.obj[keys+['dp_pa']]
-                            paired_data = sutil.omps_nm_pairing(model_obj,obs.obj,keys)
+                        paired_data = sutil.omps_nm_pairing(mod.obj,obs.obj,keys[0],apply_apriori=pairing_kws['apply_ak'])
 
                         paired_data = paired_data.where(paired_data.ozone_column.notnull())
                         p = pair()

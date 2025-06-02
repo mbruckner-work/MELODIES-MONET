@@ -225,7 +225,7 @@ def select_model_timesteps(obs_times,mod_freq):
         end += mod_freq
     return pd.date_range(start,end,freq=f'{asflt}h')
 
-def omps_nm_pairing(model_data,obs_data,o3varname,apply_apriori=True):
+def omps_nm_pairing(model_data,obs_data,o3varname,apply_apriori=True,modgrid_method='bilinear'):
     '''Calculate model total column ozone with or without OMPS NM averaging kernel applied. 
 
     Parameters
@@ -238,6 +238,8 @@ def omps_nm_pairing(model_data,obs_data,o3varname,apply_apriori=True):
         model ozone variable name
     apply_apriori : bool
         If true the satellite apriori and averaging kernel will be applied
+    modgrid_method : str
+        Method for regridding paired data onto the model grid
     Returns
     -------
     xarray.Dataset
@@ -261,7 +263,7 @@ def omps_nm_pairing(model_data,obs_data,o3varname,apply_apriori=True):
         for swath in obs_data[day]: 
             # select relevant model time steps for specific observation time
             modtsteps = select_model_timesteps(swath.time,model_output_freq)
-            temp_moddat = model_data.sel(time=drange)
+            temp_moddat = model_data.sel(time=modtsteps)
 
             # horizontal regrid to satellite pixels
             temp_moddat = temp_moddat.rename({'time':'modtime'})
@@ -269,10 +271,11 @@ def omps_nm_pairing(model_data,obs_data,o3varname,apply_apriori=True):
             mod_on_swath = regridder_mod_to_swath(temp_moddat)
 
             # linearly interpolate in time and enforce an order for dimensions where z is last.
-            tfac = (1-(np.abs(mod_on_swath.modtime-mod_on_swath.time)/mfreq)).where(np.abs(mod_on_swath.modtime - mod_on_swath.time) <= mfreq)
+            tfac = (1-(np.abs(mod_on_swath.modtime-mod_on_swath.time)/model_output_freq)).where(np.abs(mod_on_swath.modtime - mod_on_swath.time) <= model_output_freq)
             needs_vertical = (tfac*mod_on_swath).sum('modtime')
             needs_vertical = needs_vertical.where(tfac.sum('modtime').round() == 1.0).transpose('x','y','z')
             if apply_apriori: 
+                print('applying averaging kernel')
                 # vertical interpolation
                 o3_at_sat = stratify.interpolate(swath.pressure*100,needs_vertical.pres_pa_mid.values,needs_vertical[o3varname].values,axis=-1)
                 
@@ -282,6 +285,24 @@ def omps_nm_pairing(model_data,obs_data,o3varname,apply_apriori=True):
                 mod_o3_partialcol = (du_fac*delp_omps_hPa*o3_at_sat)
                 mod_o3_col = (swath['apriori']).sum('z') + (swath['layer_efficiency']*(mod_o3_partialcol - swath['apriori'])).sum('z')
             else:
-                mod_o3_col = (du_fac*needs_vertical[o2varname]*needs_vertical['dp_pa']).sum('z')
+                mod_o3_col = (du_fac*needs_vertical[o3varname]*needs_vertical['dp_pa']/100.).sum('z')
             mod_o3_col = mod_o3_col.where(~np.isnan(swath['ozone_column']))
-            paired_day.append(xr.merge([mod_o3_col,swath['ozone_column']]))
+            mod_o3_col.name = f'{o3varname}_column_model'
+            paired_day.append(xr.merge([mod_o3_col,swath['ozone_column']]).swap_dims({'x':'time'}))
+        if len(paired_day) > 1:
+            paired_day = xr.concat(paired_day,dim='time')
+        else:
+            paired_day = paired_day[0]
+        paired_day = paired_day.swap_dims({'time':'x'})
+
+        if modgrid_method == 'bilinear':
+            # use xesmf bilinear method
+            regridder_paired_to_mod = xe.Regridder(paired_day[['latitude','longitude']],model_data[['latitude','longitude']],periodic=True,method='bilinear',unmapped_to_nan=True)
+            paired_on_modgrid = regridder_paired_to_mod(paired_day)
+        elif modgrid_method == 'conservative':
+            print('Conservative regridding methods have not been set up yet.')
+        else:
+            print(f'The regridding method {modgrid_method} is unavailable.')
+        paired_on_modgrid['time'] = (['time'],[pd.to_datetime(day)])
+        all_days_paired.append(paired_on_modgrid)
+    return xr.merge(all_days_paired)
