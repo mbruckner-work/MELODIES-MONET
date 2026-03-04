@@ -327,7 +327,6 @@ class observation:
             elif self.sat_type == 'tropomi_l2_no2' and (
                     self.sat_method == None or self.sat_method == "replace_apriori"):
                 #from monetio import tropomi_l2_no2
-                self.sat_method = "replace_apriori"
                 print('Reading TROPOMI L2 NO2')
                 try:
                     self.obj = mio.sat._tropomi_l2_no2_mm.read_trpdataset(
@@ -511,6 +510,7 @@ class model:
         self.preprocessing = None
         self.plot_kwargs = None
         self.proj = None
+        self.mod_to_overpass = False
 
     def __repr__(self):
         return (
@@ -542,6 +542,8 @@ class model:
         from . import tutorial
 
         print(self.file_str)
+        if isinstance(self.file_str, list):
+            self.files = sorted(self.file_str)
         if self.file_str.startswith("example:"):
             example_id = ":".join(s.strip() for s in self.file_str.split(":")[1:])
             self.files = [tutorial.fetch_example(example_id)]
@@ -549,10 +551,11 @@ class model:
             self.files = sort(glob(self.file_str))
             
         # add option to read list of files from text file
-        _, extension = os.path.splitext(self.file_str)
-        if extension.lower() == '.txt':
-            with open(self.file_str,'r') as f:
-                self.files = f.read().split()
+        if not isinstance(self.file_str, list):
+            _, extension = os.path.splitext(self.file_str)
+            if extension.lower() == '.txt':
+                with open(self.file_str,'r') as f:
+                    self.files = f.read().split()
 
         if self.file_vert_str is not None:
             self.files_vert = sort(glob(self.file_vert_str))
@@ -1038,6 +1041,8 @@ class analysis:
                 # set the model label in the dictionary and model class instance
                 if "is_global" in self.control_dict['model'][mod].keys():
                     m.is_global = self.control_dict['model'][mod]['is_global']
+                if "mod_to_overpass" in self.control_dict["model"][mod].keys():
+                    m.mod_to_overpass = self.control_dict["model"][mod]["mod_to_overpass"]
                 if 'radius_of_influence' in self.control_dict['model'][mod].keys():
                     m.radius_of_influence = self.control_dict['model'][mod]['radius_of_influence']
                 else:
@@ -1470,13 +1475,7 @@ class analysis:
                 # TODO: add other network types / data types where (ie flight, satellite etc)
                 # if sat_swath_clm (satellite l2 column products)
                 elif obs.obs_type.lower() == 'sat_swath_clm':
-                    # grab kwargs for pairing. Use default if not specified
-                    pairing_kws = {'apply_ak':True,'mod_to_overpass':False}
-                    for key in self.pairing_kwargs.get(obs.obs_type.lower(), {}):
-                        pairing_kws[key] = self.pairing_kwargs[obs.obs_type.lower()][key]
-                    if 'apply_ak' not in self.pairing_kwargs.get(obs.obs_type.lower(), {}):
-                        print('WARNING: The satellite pairing option apply_ak is being set to True because it was not specified in the YAML. Pairing will fail if there is no AK available.')
-                    
+
                     if obs.sat_type == 'omps_nm':
                         
                         from .util import satellite_utilities as sutil
@@ -1486,7 +1485,7 @@ class analysis:
                         if 'time' in obs.obj.dims:
                             obs.obj = obs.obj.sel(time=slice(self.start_time,self.end_time))
                             obs.obj = obs.obj.swap_dims({'time':'x'})
-                        if pairing_kws['apply_ak'] is True:
+                        if obs.sat_method == 'apply_ak':
                             model_obj = mod.obj[keys+['pres_pa_mid','surfpres_pa']]
                             
                             paired_data = sutil.omps_nm_pairing_apriori(model_obj,obs.obj,keys)
@@ -1505,7 +1504,7 @@ class analysis:
                         label = '{}_{}'.format(p.obs,p.model)
                         self.paired[label] = p
 
-                    if obs.sat_type == 'tropomi_l2_no2' and obs.sat_method == "replace_apriori":
+                    if obs.sat_type == 'tropomi_l2_no2' and (obs.sat_method == None or obs.sat_method == "replace_apriori"):
                         from .util import sat_l2_swath_utility as no2util
                         from .util import satellite_utilities as sutil
 
@@ -1518,7 +1517,7 @@ class analysis:
                             print('Pairing is being done for model variable: '+keys[i_no2_varname[0]])
                         no2_varname = keys[i_no2_varname[0]]
 
-                        if pairing_kws['mod_to_overpass']:
+                        if m.mod_to_overpass:
                             print('sampling model to 13:30 local overpass time')
                             overpass_datetime = pd.date_range(self.start_time.replace(hour=13,minute=30),
                                                               self.end_time.replace(hour=13,minute=30),freq='D')
@@ -1530,7 +1529,7 @@ class analysis:
                             print('Pairing will proceed assuming that the model data is already at overpass time.')
                             from .util.tools import calc_partialcolumn
                             model_obj[f'{no2_varname}_col'] = calc_partialcolumn(model_obj,var=no2_varname)
-                        if pairing_kws['apply_ak'] is True:
+                        if obs.sat_method == 'replace_apriori':
                             paired_data = no2util.trp_interp_swatogrd_ak(obs.obj, model_obj,no2varname=no2_varname)
                         else:
                             paired_data = no2util.trp_interp_swatogrd(obs.obj, model_obj, no2varname=no2_varname)
@@ -1578,18 +1577,17 @@ class analysis:
                         ][0]
                         #TODO: allow user to select regrid method in yaml
                         paired_data_atswath = sutil.regrid_and_apply_ak(
-                            obs.obj, mod.obj, mod_var=mod_sp, sat_var=sp, sat_type=obs.sat_type) #, is_global=mod.is_global,)
-                        paired_data_atgrid = sutil.back_to_structured_grid(paired_data_atswath, model_obj)#, is_global=mod.is_global)
+                            obs.obj, mod.obj, self.start_time, self.end_time, mod_var=mod_sp, sat_var=sp, sat_type=obs.sat_type, is_global=mod.is_global)
+                        paired_data_atgrid = sutil.back_to_structured_grid(paired_data_atswath, model_obj, is_global=mod.is_global)
 
                         p = pair()
-                        paired_data = paired_data_atgrid.sel(time=slice(self.start_time, self.end_time))
                         p.type = obs.obs_type
                         p.obs = obs.label
                         p.sat_method = obs.sat_method
                         p.model = mod.label
                         p.model_vars = keys
                         p.obs_vars = obs_vars
-                        p.obj = paired_data
+                        p.obj = paired_data_atgrid
                         label = "{}_{}".format(p.obs,p.model)
                         p.filename = "{}.nc".format(label)
                         self.paired[label] = p

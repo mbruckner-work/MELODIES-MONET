@@ -21,6 +21,7 @@ from .sat_l2_swath_utility_tempo import (  # calc_grid_corners,
 )
 from .tools import calc_partialcolumn, N_A
 
+from .satellite_utilities import mod_to_overpasstime
 # import warnings
 
 
@@ -110,8 +111,8 @@ def interp_horizontal_mod2sat(obsobj, modobj, method="bilinear", is_global=False
     """
 
     regridder = xe.Regridder(
-        modobj,
-        obsobj,
+        modobj[['latitude','longitude']],
+        obsobj.squeeze(),
         ignore_degenerate=True,
         unmapped_to_nan=True,
         method=method,
@@ -119,128 +120,6 @@ def interp_horizontal_mod2sat(obsobj, modobj, method="bilinear", is_global=False
         **kwargs,
     )
     return regridder(modobj)
-
-
-def interpolate_time(modelobj, overpass_time=None):
-    """Interpolates data in time from orig to target times.
-
-    Parameters
-    ----------
-    modelobj : xr.Dataset
-        Model data to interpolate. It must contain a time dimension
-        and a longitude coordinate or variable.
-    overpass_time : int | None
-        If provided, the overpass time used for the interpolation
-        in hours. If None, 13.5 is used.
-
-    Returns
-    -------
-    xr.Dataset
-        Interpolated data.
-    """
-    overpass = 13.5 if overpass_time is None else overpass_time
-    overpass_ns = int(overpass * 3600 * 1e9)
-    utc_offset_nanoseconds = (modelobj["longitude"] / 15 * 3600 * 1e9).astype(int)
-
-    days = np.unique(modelobj["time"].dt.floor("D"))
-    interpolated_data = []
-    for day in days:
-        modelobj_day = modelobj.sel(
-            time=slice(day - np.timedelta64(1, "D"), day + np.timedelta64(1, "D"))
-        )
-        target_time = day + np.timedelta64(overpass_ns, "ns")
-        localtime = modelobj_day["time"].load() + utc_offset_nanoseconds
-        if localtime.min() > target_time or localtime.max() < target_time:
-            warnings.warn(
-                f"Target time {target_time} is outside model time range "
-                f"({np.datetime_as_string(localtime.min().values)} - "
-                f"{np.datetime_as_string(localtime.max().values)}), skipping."
-            )
-            continue
-        interp = _interpolate_time(target_time, localtime, modelobj_day)
-        interp = interp.expand_dims("time", axis=0).assign_coords(time=[target_time])
-        interp["time_utc"] = target_time - utc_offset_nanoseconds
-        interpolated_data.append(interp)
-    concat_data = xr.concat(interpolated_data, dim="time")
-    return concat_data
-
-
-def _interpolate_time(target_time, localtime, data):
-    """Applies time interpolation to the data.
-
-    Parameters
-    ----------
-    target_time : np.datetime64
-        Target time to interpolate to.
-    localtime : xr.DataArray
-        Local time of the model data.
-    data : xr.DataArray
-        Data to interpolate.
-
-    Returns
-    -------
-    xr.DataArray
-        Interpolated data.
-    """
-    previous_index, next_index = _calculate_previous_and_next_indices(localtime, target_time)
-    previous_weight, next_weight = _calculate_time_weights(
-        localtime, target_time, previous_index, next_index
-    )
-    previous_data = data.isel(time=previous_index).drop_vars("time")
-    next_data = data.isel(time=next_index).drop_vars("time")
-    interp = (previous_weight * previous_data) + (next_weight * next_data)
-    return interp
-
-
-def _calculate_previous_and_next_indices(localtime, target_time):
-    """Calculates the indices of the time immmediately before and after the target time.
-    Parameters
-    ----------
-    localtime : xr.DataArray
-        Local time of the model data.
-    target_time : np.datetime64
-        Target time to interpolate to.
-    Returns
-    -------
-    tuple[xr.DataArray, xr.DataArray]
-        Indices of the previous and next times.
-    """
-    timediff = (localtime - target_time).astype("float64")
-    previous_timediff = timediff.where(timediff <= 0, np.nan)
-    next_timediff = timediff.where(timediff > 0, np.nan)
-    previous_index = np.abs(previous_timediff).argmin(dim="time", skipna=True)
-    next_index = np.abs(next_timediff).argmin(dim="time", skipna=True)
-    return previous_index, next_index
-
-
-def _calculate_time_weights(localtime, target_time, previous_index, next_index):
-    """Calculates the weights for the time interpolation.
-
-    Parameters
-    ----------
-    localtime : xr.DataArray
-        Local time of the model data.
-    target_time : np.datetime64
-        Target time to interpolate to.
-    previous_index : xr.DataArray
-        Index of the previous time.
-    next_index : xr.DataArray
-        Index of the next time.
-
-    Returns
-    -------
-    tuple[xr.DataArray, xr.DataArray]
-        Weights for the previous and next times.
-    """
-    previous_time = localtime.isel(time=previous_index)
-    next_time = localtime.isel(time=next_index)
-    total_diff = (next_time - previous_time).astype("float64")
-    previous_diff = (target_time - previous_time).astype("float64").drop_vars("time")
-    next_diff = (next_time - target_time).astype("float64").drop_vars("time")
-    previous_weight = 1 - previous_diff / total_diff
-    next_weight = 1 - next_diff / total_diff
-    return previous_weight, next_weight
-
 
 # @numba.jit(nopython=True)
 def _interp_vert(orig, target, data):
@@ -404,15 +283,15 @@ def apply_averaging_kernel_no2(mod_p_cols, obsobj, averaging_kernel_params=None)
         DataArray containing the model columns after applying the averaging kernel.
     """
     if averaging_kernel_params["tropospheric_averaging_kernel_calc"]:
+        assert "tm5_tropopause_pressure" in obsobj, "Calculating model tropospheic column requires TM5 tropopause pressure from TROPOMI"
         ak = (
             obsobj[averaging_kernel_params["airmass_factor_total"]]
             / obsobj[averaging_kernel_params["airmass_factor_troposphere"]]
             * obsobj[averaging_kernel_params["averaging_kernel"]]
         )
+        ak = ak.where(obsobj["pres_pa_mid"] >= obsobj["tm5_tropopause_pressure"], other=0)
     else:
         ak = obsobj[averaging_kernel_params["averaging_kernel"]]
-    if "tm5_tropopause_pressure" in obsobj:
-        ak = ak.where(obsobj["pres_pa_mid"] >= obsobj["tm5_tropopause_pressure"], other=0)
 
     column_data_model = xr.dot(ak, mod_p_cols, dim="z") * N_A / M2TOCM2
     column_data_model.attrs = {
@@ -513,36 +392,6 @@ def within_model_domain(obsobj, bounds):
         .any()
         .item()
     )
-
-
-def calc_local_geodate(time, longitude):
-    """Calculates the geographical date based on longitude
-
-    Parameters
-    ----------
-    time : xr.DataArray
-        DataArray containing time for each pixel
-    longitude : xr.DataArray
-        Longitude for each pixel. It has to be
-        [-180; 180]
-
-    Returns
-    -------
-    xr.DataArray
-        DataArray containing the local time based on longitude
-        for each granule.
-    """
-    assert ((longitude <= 180) | longitude.isnull()).all()
-    if len(time.shape) == 2:
-        # Some of the TROPOMI datasets have delta_time depending only
-        # on scanline (e.g. NO2)
-        return time + np.timedelta64(longitude.isel(x=0).values * 240, "s")
-    if len(time.shape) == 3:
-        # Some of the TROPOMI datasets have delta_time depending
-        # on scanline and ground_pixel (e.g. HCHO)
-        return time + np.timedelta64(longitude.values * 240, "s")
-    raise ValueError("time variable (e.g., time_granule) has wrong dimension number.")
-
 
 def crop_obsobj(obsobj, modobj):
     """Subselects the observations depending on the model domain.
@@ -646,31 +495,33 @@ def _regrid_and_apply_ak(
 
     print("obsobj", obsobj)
     output_pair = {}
-    modobj_at_overpass_time = interpolate_time(modobj, overpass_time=13.5)
-    modobj_at_overpass_time["altitude"] = calc_altitude_from_thickness(
-        modobj_at_overpass_time["dz_m"]
-    )
 
     obsobj_dates = np.unique(obsobj["time_granule"].dt.floor("D"))
-    modobj_dates_granules = modobj_at_overpass_time["time_utc"].dt.floor("D")
+    modobj_dates_granules = modobj["time"].dt.floor("D")
     for d in obsobj_dates:
         if d not in modobj_dates_granules:
             warnings.warn(f"Model does not have data for {d}, skipping.")
             continue
-        obsobj_cropped = crop_obsobj(obsobj, modobj)
-        if obsobj_cropped is None:
-            warnings.warn(f"Swath on {d} is outside model domain, skipping.")
-            continue
+        if not is_global:
+            obsobj_cropped = crop_obsobj(obsobj, modobj)
+            if obsobj_cropped is None:
+                warnings.warn(f"Swath on {d} is outside model domain, skipping.")
+                continue
+        else:
+            # assign obsobj_cropped pointer to observation data
+            obsobj_cropped = obsobj
         # NOTE: We still need to check if this works accross the dateline
         modobj_at_date = modobj_at_overpass_time.where(
             modobj_dates_granules == d, drop=True
-        ).drop_vars("time_utc")
+        ).drop_vars("time").squeeze()
         modobj_regrid = interp_horizontal_mod2sat(obsobj_cropped, modobj_at_date, is_global=is_global)
+        modobj_regrid = modobj_regrid.expand_dims('time')
         modobj_regrid = interp_vertical_mod2swath(obsobj_cropped, modobj_regrid, mod_var)
         # Apply averaging kernel
         modobj_regrid[mod_var] = apply_averaging_kernel(
             modobj_regrid, obsobj_cropped, sat_type, varname=mod_var
         )
+        
         starttime_swath = np.datetime_as_string(obsobj["time_granule"].min().values)
         output_dataset = xr.Dataset()
         output_dataset[mod_var] = modobj_regrid[mod_var]
@@ -683,9 +534,12 @@ def _regrid_and_apply_ak(
 def regrid_and_apply_ak(
     obsobj_dict,
     modobj,
+    start_time,
+    end_time,
     mod_var="NO2",
     sat_var="nitrogendioxide_tropospheric_column",
     sat_type="tropomi_l2_no2",
+    is_global=False,
 ):
     """Regrids and applies AK to multiple swaths.
 
@@ -705,9 +559,16 @@ def regrid_and_apply_ak(
     """
 
     output_pair = {}
+
+    overpass_datetime = pd.date_range(start_time.replace(hour=13,minute=30),
+                                      end_time.replace(hour=13,minute=30),freq='D')
+    
+    mod_at_overpass_time = mod_to_overpasstime(modobj, overpass_datetime) 
+    mod_at_overpass_time["altitude"] = calc_altitude_from_thickness(mod_at_overpass_time["dz_m"])
+    
     for k in obsobj_dict.keys():
         regridded_swath = _regrid_and_apply_ak(
-            modobj, obsobj_dict[k], mod_var=mod_var, sat_var=sat_var, sat_type=sat_type
+            modobj, obsobj_dict[k], mod_var=mod_var, sat_var=sat_var, sat_type=sat_type, is_global=is_global,
         )
         output_pair.update(regridded_swath)
     if len(output_pair) == 0:

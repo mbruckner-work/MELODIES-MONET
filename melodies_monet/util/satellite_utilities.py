@@ -51,15 +51,14 @@ def mod_to_overpasstime(modobj,opass_tms,partial_col=None):
     outmod : xarray.Dataset 
         revised model data at local overpass time
     '''
-
+    from .tools import calc_geolocaltime
+    
     nst, = opass_tms.shape
     # nmt, = modobj.time.shape
     # ny,nx = modobj.longitude.shape
     
-    # Determine local time offset
-    local_utc_offset = (modobj['longitude']/15).round().astype('timedelta64[h]')
     # initialize local time as variable
-    modobj['localtime'] = modobj['time'] + local_utc_offset
+    modobj['localtime'] = calc_geolocaltime(modobj)
 
     # initialize new model object with satellite datetimes
     outmod = []
