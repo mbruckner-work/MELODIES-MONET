@@ -335,9 +335,9 @@ class observation:
                     self.obj = mio.sat.tropomi_l2_no2.read_trpdataset(
                         self.file, self.variable_dict, debug=self.debug)
             elif self.sat_type.startswith('tropomi_l2') and self.sat_method == "apply_ak":
-                from .util.read_tropomi_data import open_datasets
+                #from .util.read_tropomi_data import open_datasets
                 print('Reading TROPOMI L2 with averaging kernel application')
-                self.obj = open_datasets(self.file, self.variable_dict)
+                self.obj = mio.sat.tropomi_l2.open_datasets(self.file, self.variable_dict)
             elif "tempo_l2" in self.sat_type:
                 print('Reading TEMPO L2')
                 try:

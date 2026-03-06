@@ -14,6 +14,7 @@ import numba
 import numpy as np
 import xarray as xr
 import xesmf as xe
+import pandas as pd
 
 from .sat_l2_swath_utility_tempo import (  # calc_grid_corners,
     calc_altitude_from_thickness,
@@ -112,7 +113,7 @@ def interp_horizontal_mod2sat(obsobj, modobj, method="bilinear", is_global=False
 
     regridder = xe.Regridder(
         modobj[['latitude','longitude']],
-        obsobj.squeeze(),
+        obsobj[['latitude','longitude']].squeeze(),
         ignore_degenerate=True,
         unmapped_to_nan=True,
         method=method,
@@ -498,6 +499,7 @@ def _regrid_and_apply_ak(
 
     obsobj_dates = np.unique(obsobj["time_granule"].dt.floor("D"))
     modobj_dates_granules = modobj["time"].dt.floor("D")
+
     for d in obsobj_dates:
         if d not in modobj_dates_granules:
             warnings.warn(f"Model does not have data for {d}, skipping.")
@@ -511,9 +513,10 @@ def _regrid_and_apply_ak(
             # assign obsobj_cropped pointer to observation data
             obsobj_cropped = obsobj
         # NOTE: We still need to check if this works accross the dateline
-        modobj_at_date = modobj_at_overpass_time.where(
-            modobj_dates_granules == d, drop=True
-        ).drop_vars("time").squeeze()
+        print(d)
+        print(modobj_dates_granules)
+        modobj_at_date = modobj.where(modobj_dates_granules == d, drop=True).drop_vars("time").squeeze()
+        print(modobj_at_date)
         modobj_regrid = interp_horizontal_mod2sat(obsobj_cropped, modobj_at_date, is_global=is_global)
         modobj_regrid = modobj_regrid.expand_dims('time')
         modobj_regrid = interp_vertical_mod2swath(obsobj_cropped, modobj_regrid, mod_var)
@@ -568,7 +571,7 @@ def regrid_and_apply_ak(
     
     for k in obsobj_dict.keys():
         regridded_swath = _regrid_and_apply_ak(
-            modobj, obsobj_dict[k], mod_var=mod_var, sat_var=sat_var, sat_type=sat_type, is_global=is_global,
+            mod_at_overpass_time, obsobj_dict[k], mod_var=mod_var, sat_var=sat_var, sat_type=sat_type, is_global=is_global,
         )
         output_pair.update(regridded_swath)
     if len(output_pair) == 0:

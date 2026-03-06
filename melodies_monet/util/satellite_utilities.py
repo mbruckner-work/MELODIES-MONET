@@ -56,7 +56,7 @@ def mod_to_overpasstime(modobj,opass_tms,partial_col=None):
     nst, = opass_tms.shape
     # nmt, = modobj.time.shape
     # ny,nx = modobj.longitude.shape
-    
+    print(nst)
     # initialize local time as variable
     modobj['localtime'] = calc_geolocaltime(modobj)
 
@@ -76,7 +76,7 @@ def mod_to_overpasstime(modobj,opass_tms,partial_col=None):
     #print(outmod)
     outmod = xr.concat(outmod,dim='time')
     outmod['time'] = (['time'],opass_tms)
-    
+    print(outmod) 
     if partial_col:
         from .tools import calc_partialcolumn        
         outmod[f'{partial_col}_col'] = calc_partialcolumn(outmod,var=partial_col)
