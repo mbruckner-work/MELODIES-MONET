@@ -513,10 +513,7 @@ def _regrid_and_apply_ak(
             # assign obsobj_cropped pointer to observation data
             obsobj_cropped = obsobj
         # NOTE: We still need to check if this works accross the dateline
-        print(d)
-        print(modobj_dates_granules)
         modobj_at_date = modobj.where(modobj_dates_granules == d, drop=True).drop_vars("time").squeeze()
-        print(modobj_at_date)
         modobj_regrid = interp_horizontal_mod2sat(obsobj_cropped, modobj_at_date, is_global=is_global)
         modobj_regrid = modobj_regrid.expand_dims('time')
         modobj_regrid = interp_vertical_mod2swath(obsobj_cropped, modobj_regrid, mod_var)
