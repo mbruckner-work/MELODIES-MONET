@@ -219,7 +219,8 @@ class model:
             else:
                 file_list = self.files
             if len(file_list) > 1:
-                self.obj = mio.models.raqms.open_mfdataset(file_list, **self.mod_kwargs)
+                from monetio.models import raqms 
+                self.obj = raqms.open_mfdataset(file_list, **self.mod_kwargs)
             else:
                 self.obj = mio.models.raqms.open_dataset(file_list)
             if "ptrop" in self.obj and "pres_pa_trop" not in self.obj:

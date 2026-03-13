@@ -669,7 +669,76 @@ class analysis:
                     label = "{}_{}".format(p.obs, p.model)
                     self.paired[label] = p
                     # write_util.write_ncf(p.obj,p.filename) # write out to file
+                elif obs.obs_type.lower() == "aircraft_curtain":
+                    from melodies_monet.util.tools import resample_stratify
+                    # convert this to pandas dataframe unless already done because second time paired this obs
+                    if not isinstance(obs.obj, pd.DataFrame):
+                        obs.obj = obs.obj.to_dataframe()
 
+                    # drop any variables where coords NaN
+                    obs.obj = (
+                        obs.obj.reset_index()
+                        .dropna(subset=["pressure_obs", "latitude", "longitude"])
+                        .set_index("time")
+                    )
+
+                    # do the facy trick to convert to get something useful for MONET
+                    # this converts to dimensions of x and y
+                    # you may want to make pressure / msl a coordinate too
+                    new_ds_obs = (
+                        obs.obj.rename_axis("time_obs")
+                        .reset_index()
+                        .monet._df_to_da()
+                        .set_coords(["time_obs", "pressure_obs"])
+                    )
+
+                    # Nearest neighbor approach to find closest grid cell to each point.
+                    ds_model = m.util.combinetool.combine_da_to_da(
+                        model_obj, new_ds_obs, merge=False
+                    )
+                    # Interpolate based on time in the observations
+                    ds_model = ds_model.interp(time=ds_model.time_obs.squeeze())
+
+                    print(mod_vars)
+                    target_pressures = np.linspace(ds_model['pres_pa_mid'].max(), ds_model['pres_pa_mid'].min(), 5*model_obj.sizes['z'])
+
+                    ds_mod_const = []
+                    for modvar in mod_vars:
+                        # Resample model data to target pressures using stratify
+                        da_var_const = resample_stratify(
+                            ds_model[modvar],
+                            target_pressures,
+                            ds_model["pres_pa_mid"],
+                            axis=1,
+                            interpolation="linear",
+                            extrapolation="nan",
+                        )
+                        da_var_const.name = modvar
+                        ds_mod_const.append(da_var_const)
+                    ds_mod_const = xr.merge(ds_mod_const)
+                    # Create target_pressures DataArray
+                    da_target_pressures = xr.DataArray(target_pressures, dims=("z"))
+                    da_target_pressures.name = "target_pressures"
+
+                    # Merge DataArrays into a single Dataset
+                    ds_wrf_const = xr.merge([ds_mod_const, da_target_pressures])
+                    ds_wrf_const = ds_wrf_const.set_coords("target_pressures")
+                    # Ensure 'pressure_model' is included in the DataFrame (pairdf) #qzr++
+                    # if 'pressure_model' not in paired_data.columns:
+                    # raise KeyError("'pressure_model' is missing in the paired_data")   #qzr++
+
+                    # this outputs as a pandas dataframe.  Convert this to xarray obj
+                    p = pair()
+                    p.type = "aircraft"
+                    p.radius_of_influence = None
+                    p.obs = obs.label
+                    p.model = mod.label
+                    p.model_vars = keys
+                    p.obs_vars = obs_vars
+                    p.filename = "{}_{}.nc".format(p.obs, p.model)
+                    p.obj = ds_wrf_const
+                    label = "{}_{}".format(p.obs, p.model)
+                    self.paired[label] = p
                 elif obs.obs_type.lower() == "sonde":
                     from melodies_monet.util.tools import vert_interp
 

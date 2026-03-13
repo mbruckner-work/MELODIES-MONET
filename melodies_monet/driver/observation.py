@@ -185,6 +185,10 @@ class observation:
                 if time_interval is not None:
                     self.obj = self.obj.sel(time=slice(time_interval[0], time_interval[-1]))
 
+            elif self.sat_type == 'omps_lp':
+                from monetio.sat import omps_lp
+                self.obj = omps_lp.open_dataset(self.file)
+                
             elif self.sat_type == "mopitt_l3":
                 print("Reading MOPITT")
                 if time_interval is not None:
